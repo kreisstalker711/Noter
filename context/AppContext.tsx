@@ -30,9 +30,10 @@ import {
   Flashcard, 
   Quiz 
 } from "../lib/mockData";
+import { StudyMaterialResult } from "../services/studyGenerator";
 
 type PageType = "splash" | "onboarding" | "auth" | "app";
-type TabType = "home" | "library" | "progress" | "profile" | "settings" | "scan" | "pdf" | "chat" | "quiz" | "flashcards" | "study" | "bonus";
+type TabType = "home" | "library" | "progress" | "profile" | "settings" | "scan" | "pdf" | "chat" | "quiz" | "flashcards" | "study" | "bonus" | "stats";
 
 interface UserProfile {
   uid: string;
@@ -53,6 +54,13 @@ interface AppContextProps {
   quizzes: Quiz[];
   stats: typeof initialStats;
   currentCollectionId: string | null;
+  
+  // Real Study Guides & Workspace Context
+  studyMaterials: StudyMaterialResult[];
+  activeStudyData: StudyMaterialResult | null;
+  setActiveStudyData: (data: StudyMaterialResult | null) => void;
+  fetchStudyMaterials: () => Promise<void>;
+  deleteStudyMaterial: (id: string) => Promise<void>;
   
   // Navigation
   setCurrentPage: (page: PageType) => void;
@@ -100,6 +108,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [stats, setStats] = useState<typeof initialStats>(initialStats);
+
+  // Scanned study guides states
+  const [studyMaterials, setStudyMaterials] = useState<StudyMaterialResult[]>([]);
+  const [activeStudyData, setActiveStudyData] = useState<StudyMaterialResult | null>(null);
 
   // Theme Syncing
   useEffect(() => {
@@ -190,6 +202,67 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStats(initialStats);
   };
 
+  // Fetch scanned study guides from database
+  const fetchStudyMaterials = async () => {
+    if (!user) return;
+    if (isMockFirebase) {
+      const saved = localStorage.getItem("noter_study_materials") || "[]";
+      const parsed = JSON.parse(saved);
+      const userGuides = parsed.filter((item: any) => item.userId === user.uid);
+      setStudyMaterials(userGuides);
+    } else if (fbDb) {
+      try {
+        const q = query(
+          collection(fbDb, "studyMaterials"),
+          where("userId", "==", user.uid)
+        );
+        const snap = await getDocs(q);
+        const list: StudyMaterialResult[] = [];
+        snap.forEach((doc) => {
+          list.push({ id: doc.id, ...doc.data() } as any);
+        });
+        // Sort in client memory by date desc
+        list.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setStudyMaterials(list);
+      } catch (err) {
+        console.error("Error fetching study materials:", err);
+      }
+    }
+  };
+
+  const deleteStudyMaterial = async (id: string) => {
+    if (isMockFirebase) {
+      const saved = localStorage.getItem("noter_study_materials") || "[]";
+      const parsed = JSON.parse(saved);
+      const filtered = parsed.filter((item: any) => item.id !== id);
+      localStorage.setItem("noter_study_materials", JSON.stringify(filtered));
+      setStudyMaterials((prev) => prev.filter((item) => (item as any).id !== id));
+      if (activeStudyData && (activeStudyData as any).id === id) {
+        setActiveStudyData(null);
+      }
+      console.log("[Client] Mock studyMaterial deleted.");
+    } else if (fbDb) {
+      try {
+        const { doc, deleteDoc } = await import("firebase/firestore");
+        await deleteDoc(doc(fbDb, "studyMaterials", id));
+        setStudyMaterials((prev) => prev.filter((item) => (item as any).id !== id));
+        if (activeStudyData && (activeStudyData as any).id === id) {
+          setActiveStudyData(null);
+        }
+        console.log("[Client] Firestore studyMaterial deleted.");
+      } catch (err) {
+        console.error("Error deleting study material:", err);
+      }
+    }
+  };
+
+  // Sync study guide fetchers on user state change
+  useEffect(() => {
+    if (user) {
+      fetchStudyMaterials();
+    }
+  }, [user]);
+
   // Sync firestore data
   const syncFromFirestore = async (userId: string) => {
     if (!fbDb) return;
@@ -204,53 +277,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setStats(initialStats);
       }
 
-      // Fetch collections
+      // Fetch collections (don't seed)
       const collectionsCol = collection(fbDb, "users", userId, "collections");
       const collectionsSnap = await getDocs(collectionsCol);
       const cols: Collection[] = [];
       collectionsSnap.forEach((d) => {
         cols.push({ id: d.id, ...d.data() } as Collection);
       });
-
-      if (cols.length === 0) {
-        // Seed Firestore
-        for (const col of initialCollections) {
-          await setDoc(doc(fbDb, "users", userId, "collections", col.id), col);
-          cols.push(col);
-        }
-      }
       setCollections(cols);
 
-      // Fetch flashcards
+      // Fetch flashcards (don't seed)
       const flashcardsCol = collection(fbDb, "users", userId, "flashcards");
       const flashcardsSnap = await getDocs(flashcardsCol);
       const cards: Flashcard[] = [];
       flashcardsSnap.forEach((d) => {
         cards.push({ id: d.id, ...d.data() } as Flashcard);
       });
-
-      if (cards.length === 0) {
-        // Seed Firestore
-        for (const card of initialFlashcards) {
-          await setDoc(doc(fbDb, "users", userId, "flashcards", card.id), card);
-          cards.push(card);
-        }
-      }
       setFlashcards(cards);
 
-      // Fetch quizzes
+      // Fetch quizzes (don't seed)
       const quizzesCol = collection(fbDb, "users", userId, "quizzes");
       const quizzesSnap = await getDocs(quizzesCol);
       const qz: Quiz[] = [];
       quizzesSnap.forEach((d) => {
         qz.push({ id: d.id, ...d.data() } as Quiz);
       });
-      if (qz.length === 0) {
-        for (const q of initialQuizzes) {
-          await setDoc(doc(fbDb, "users", userId, "quizzes", q.id), q);
-          qz.push(q);
-        }
-      }
       setQuizzes(qz);
     } catch (err) {
       console.error("Firestore sync error, reverting to local data", err);
@@ -820,6 +871,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         quizzes,
         stats,
         currentCollectionId,
+        
+        studyMaterials,
+        activeStudyData,
+        setActiveStudyData,
+        fetchStudyMaterials,
+        deleteStudyMaterial,
         
         setCurrentPage,
         setActiveTab,

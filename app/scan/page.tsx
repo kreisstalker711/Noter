@@ -28,6 +28,9 @@ import { collection, addDoc } from "firebase/firestore";
 export default function ScanPage() {
   const context = React.useContext(AppContext);
   const setActiveTab = context?.setActiveTab || (() => {});
+  const activeStudyData = context?.activeStudyData || null;
+  const setActiveStudyData = context?.setActiveStudyData || (() => {});
+  const fetchStudyMaterials = context?.fetchStudyMaterials || (() => Promise.resolve());
   
   const {
     ocrText,
@@ -48,7 +51,6 @@ export default function ScanPage() {
 
   // AI workspace states
   const [generationLoading, setGenerationLoading] = useState(false);
-  const [studyData, setStudyData] = useState<StudyMaterialResult | null>(null);
   const [activeStudyTab, setActiveStudyTab] = useState<StudyTabType>("summary");
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -138,12 +140,22 @@ export default function ScanPage() {
     setError(null);
     setCameraError(null);
 
+    // Detect sourceType from selected/captured file
+    let sourceType: "PDF" | "Camera" | "Image" = "Image";
+    if (file) {
+      if (file.name.toLowerCase().endsWith(".pdf")) {
+        sourceType = "PDF";
+      } else if (file.name.startsWith("camera_snap_")) {
+        sourceType = "Camera";
+      }
+    }
+
     try {
       // 1. Call API route to clean OCR and generate JSON files
       const data = await generateStudyMaterial(ocrText);
       
       // 2. Open Study Workspace immediately to user!
-      setStudyData(data);
+      setActiveStudyData(data);
       setGenerationLoading(false); // Disable loading screen immediately
       console.log("[Client] Study workspace opened");
 
@@ -158,7 +170,9 @@ export default function ScanPage() {
         quiz: data.quiz,
         keywords: data.keywords,
         createdAt: new Date().toISOString(),
-        userId: currentUserId
+        userId: currentUserId,
+        sourceType: sourceType,
+        fileName: file ? file.name : "scanned_document.txt"
       };
 
       console.log("[Client] Saving to Firestore (background)");
@@ -168,12 +182,25 @@ export default function ScanPage() {
           if (isMockFirebase) {
             const saved = localStorage.getItem("noter_study_materials") || "[]";
             const parsed = JSON.parse(saved);
-            parsed.push({ ...docData, id: `mock-${Date.now()}` });
+            const mockId = `mock-${Date.now()}`;
+            parsed.push({ ...docData, id: mockId });
             localStorage.setItem("noter_study_materials", JSON.stringify(parsed));
             console.log("[Client] Firestore success (Mock saved to LocalStorage)");
+            
+            // Sync context history immediately
+            fetchStudyMaterials();
+            
+            // Re-bind workspace data with new saved ID
+            setActiveStudyData({ ...data, id: mockId } as any);
           } else {
-            await addDoc(collection(db, "studyMaterials"), docData);
+            const docRef = await addDoc(collection(db, "studyMaterials"), docData);
             console.log("[Client] Firestore success (Saved to Cloud Firestore)");
+            
+            // Sync context history immediately
+            fetchStudyMaterials();
+            
+            // Re-bind workspace data with new saved ID
+            setActiveStudyData({ ...data, id: docRef.id } as any);
           }
         } catch (dbErr) {
           console.error("[Client] Background database save error:", dbErr);
@@ -189,7 +216,7 @@ export default function ScanPage() {
   };
 
   const handleResetWorkspace = () => {
-    setStudyData(null);
+    setActiveStudyData(null);
     setFile(null);
     clearOCR();
   };
@@ -224,7 +251,7 @@ export default function ScanPage() {
   }
 
   // --- STATE 2: ACTIVE STUDY WORKSPACE VIEW ---
-  if (studyData) {
+  if (activeStudyData) {
     return (
       <div className="space-y-6 pb-20 md:pb-6 select-none max-w-4xl mx-auto w-full">
         {/* Workspace Header */}
@@ -261,32 +288,32 @@ export default function ScanPage() {
         <div className="pt-2">
           {activeStudyTab === "summary" && (
             <SummaryCard
-              chapterTitle={studyData.chapterTitle}
-              summary={studyData.summary}
-              importantPoints={studyData.importantPoints}
-              cleanText={studyData.cleanText}
+              chapterTitle={activeStudyData.chapterTitle}
+              summary={activeStudyData.summary}
+              importantPoints={activeStudyData.importantPoints}
+              cleanText={activeStudyData.cleanText}
             />
           )}
 
           {activeStudyTab === "points" && (
             <SummaryCard
-              chapterTitle={studyData.chapterTitle}
-              summary={studyData.summary}
-              importantPoints={studyData.importantPoints}
-              cleanText={studyData.cleanText}
+              chapterTitle={activeStudyData.chapterTitle}
+              summary={activeStudyData.summary}
+              importantPoints={activeStudyData.importantPoints}
+              cleanText={activeStudyData.cleanText}
             />
           )}
 
           {activeStudyTab === "cards" && (
-            <FlashcardViewer flashcards={studyData.flashcards} />
+            <FlashcardViewer flashcards={activeStudyData.flashcards} />
           )}
 
           {activeStudyTab === "quiz" && (
-            <QuizViewer quiz={studyData.quiz} />
+            <QuizViewer quiz={activeStudyData.quiz} />
           )}
 
           {activeStudyTab === "keywords" && (
-            <KeywordCard keywords={studyData.keywords} />
+            <KeywordCard keywords={activeStudyData.keywords} />
           )}
         </div>
       </div>

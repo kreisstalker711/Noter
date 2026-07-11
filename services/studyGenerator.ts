@@ -12,6 +12,13 @@ export interface QuizQuestion {
 }
 
 export interface StudyMaterialResult {
+  id?: string;
+  userId?: string;
+  createdAt?: string;
+  sourceType?: "PDF" | "Camera" | "Image";
+  fileName?: string;
+  mode?: string;
+  chatHistory?: any[];
   cleanText: string;
   chapterTitle: string;
   summary: string;
