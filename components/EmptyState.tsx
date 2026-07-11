@@ -25,12 +25,12 @@ export const EmptyState: React.FC = () => {
               <line x1="22" y1="64" x2="30" y2="64" stroke="var(--border)" strokeWidth="2.5" strokeLinecap="round" />
               {/* Scan indicator line */}
               <motion.line
-                animate={{ y1: [30, 70, 30], y2: [30, 70, 30] }}
-                transition={{ repeat: Infinity, duration: 2.5, ease: "linear" }}
                 x1="30"
                 y1="30"
                 x2="75"
                 y2="30"
+                animate={{ y: [0, 40, 0] }}
+                transition={{ repeat: Infinity, duration: 2.5, ease: "linear" }}
                 stroke="var(--foreground)"
                 strokeWidth="2"
                 strokeLinecap="round"
