@@ -165,7 +165,7 @@ Source OCR Text:
 "${ocrText}"`;
 
     const cleanCompletion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       messages: [{ role: "user", content: ocrCleanPrompt }],
       temperature: 0.1,
     });
@@ -211,7 +211,7 @@ Source Cleaned Text:
 "${cleanText}"`;
 
     const materialCompletion = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
+      model: "llama-3.1-8b-instant",
       messages: [{ role: "user", content: generatePrompt }],
       temperature: 0.3,
       response_format: { type: "json_object" } // Enforce JSON formatting
