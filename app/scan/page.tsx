@@ -14,15 +14,27 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowLeft, Camera, RefreshCw, X, AlertCircle } from "lucide-react";
 import Image from "next/image";
 
+// AI Generation imports
+import { generateStudyMaterial, StudyMaterialResult } from "../../services/studyGenerator";
+import { LoadingScreen } from "../../components/LoadingScreen";
+import { SummaryCard } from "../../components/SummaryCard";
+import { FlashcardViewer } from "../../components/FlashcardViewer";
+import { QuizViewer } from "../../components/QuizViewer";
+import { KeywordCard } from "../../components/KeywordCard";
+import { StudyTabs, StudyTabType } from "../../components/StudyTabs";
+import { db, isMockFirebase } from "../../lib/firebase";
+import { collection, addDoc } from "firebase/firestore";
+
 export default function ScanPage() {
   const context = React.useContext(AppContext);
   const setActiveTab = context?.setActiveTab || (() => {});
+  
   const {
     ocrText,
     setOcrText,
-    loading,
-    status,
-    progress,
+    loading: ocrLoading,
+    status: ocrStatus,
+    progress: ocrProgress,
     error: ocrError,
     setError,
     processOCR,
@@ -33,6 +45,11 @@ export default function ScanPage() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+
+  // AI workspace states
+  const [generationLoading, setGenerationLoading] = useState(false);
+  const [studyData, setStudyData] = useState<StudyMaterialResult | null>(null);
+  const [activeStudyTab, setActiveStudyTab] = useState<StudyTabType>("summary");
 
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -113,12 +130,157 @@ export default function ScanPage() {
     await processOCR(file);
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!ocrText) return;
-    console.log("Extracted OCR Text:", ocrText);
-    // Future step: trigger AI flashcard generation page context transition
+    setGenerationLoading(true);
+    setError(null);
+    setCameraError(null);
+
+    try {
+      // 1. Trigger server action to clean OCR and generate JSON files via Groq SDK
+      const data = await generateStudyMaterial(ocrText);
+      setStudyData(data);
+
+      // 2. Save study guides to Firestore db
+      const currentUserId = context?.user?.uid || "mock-user-id";
+      const docData = {
+        cleanText: data.cleanText,
+        chapterTitle: data.chapterTitle,
+        summary: data.summary,
+        importantPoints: data.importantPoints,
+        flashcards: data.flashcards,
+        quiz: data.quiz,
+        keywords: data.keywords,
+        createdAt: new Date().toISOString(),
+        userId: currentUserId
+      };
+
+      if (isMockFirebase) {
+        // Save to local storage for sandboxed test logins
+        const saved = localStorage.getItem("noter_study_materials") || "[]";
+        const parsed = JSON.parse(saved);
+        parsed.push({ ...docData, id: `mock-${Date.now()}` });
+        localStorage.setItem("noter_study_materials", JSON.stringify(parsed));
+        console.log("Study guides saved to Mock LocalStorage.");
+      } else {
+        // Save to Firebase Firestore StudyMaterials Collection
+        await addDoc(collection(db, "studyMaterials"), docData);
+        console.log("Study guides saved successfully to Firebase Firestore.");
+      }
+    } catch (err) {
+      console.error("AI study generation failed:", err);
+      setError("AI Generation failed. Please verify network access or check Groq API configuration.");
+    } finally {
+      setGenerationLoading(false);
+    }
   };
 
+  const handleResetWorkspace = () => {
+    setStudyData(null);
+    setFile(null);
+    clearOCR();
+  };
+
+  // --- STATE 1: AI GENERATION LOADING VIEW ---
+  if (generationLoading) {
+    return (
+      <div className="space-y-6 pb-20 md:pb-6 select-none max-w-4xl mx-auto w-full">
+        <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2.5">
+            <div className="relative w-8 h-8 overflow-hidden rounded-xl border border-border bg-card p-0.5 shadow-sm">
+              <Image
+                src="/logo.png"
+                alt="Noter Logo"
+                fill
+                sizes="32px"
+                className="object-cover rounded-xl"
+              />
+            </div>
+            <div>
+              <h1 className="text-xl font-extrabold text-foreground tracking-tight leading-none">Generating Study Guide</h1>
+              <p className="text-[11px] text-muted-foreground font-semibold mt-1">
+                Please wait while Groq AI constructs summaries and deck flashcards...
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <LoadingScreen />
+      </div>
+    );
+  }
+
+  // --- STATE 2: ACTIVE STUDY WORKSPACE VIEW ---
+  if (studyData) {
+    return (
+      <div className="space-y-6 pb-20 md:pb-6 select-none max-w-4xl mx-auto w-full">
+        {/* Workspace Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={handleResetWorkspace}
+              className="p-2 rounded-xl border border-border bg-card text-foreground hover:bg-secondary transition cursor-pointer active:scale-95"
+              title="Start New Scan"
+            >
+              <ArrowLeft size={16} />
+            </button>
+            <div>
+              <h1 className="text-xl font-extrabold text-foreground tracking-tight leading-none">Study Workspace</h1>
+              <p className="text-[11px] text-muted-foreground font-semibold mt-1">
+                Explore structured chapter summaries, flashcards, and quizzes.
+              </p>
+            </div>
+          </div>
+
+          <Button
+            onClick={handleResetWorkspace}
+            variant="outline"
+            className="h-9 px-4.5 rounded-xl border-border text-foreground hover:bg-secondary cursor-pointer text-[11px] font-bold bg-background hidden sm:flex"
+          >
+            Start New Scan
+          </Button>
+        </div>
+
+        {/* Tab Menu Segment controls */}
+        <StudyTabs activeTab={activeStudyTab} setActiveTab={setActiveStudyTab} />
+
+        {/* Tab Content Display */}
+        <div className="pt-2">
+          {activeStudyTab === "summary" && (
+            <SummaryCard
+              chapterTitle={studyData.chapterTitle}
+              summary={studyData.summary}
+              importantPoints={studyData.importantPoints}
+              cleanText={studyData.cleanText}
+            />
+          )}
+
+          {activeStudyTab === "points" && (
+            <SummaryCard
+              chapterTitle={studyData.chapterTitle}
+              summary={studyData.summary}
+              importantPoints={studyData.importantPoints}
+              cleanText={studyData.cleanText}
+            />
+          )}
+
+          {activeStudyTab === "cards" && (
+            <FlashcardViewer flashcards={studyData.flashcards} />
+          )}
+
+          {activeStudyTab === "quiz" && (
+            <QuizViewer quiz={studyData.quiz} />
+          )}
+
+          {activeStudyTab === "keywords" && (
+            <KeywordCard keywords={studyData.keywords} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- STATE 3: DEFAULT SCAN OPTIONS / OCR FLOW VIEW ---
   return (
     <div className="space-y-6 pb-20 md:pb-6 select-none max-w-4xl mx-auto w-full">
       {/* Header Bar */}
@@ -149,12 +311,12 @@ export default function ScanPage() {
         </div>
       </div>
 
-      {/* Input Options Grid (Scan camera, select files) */}
+      {/* Input Options Grid */}
       <ScanOptions
         onFileSelect={handleFileSelect}
         onError={setError}
         onOpenCamera={openCamera}
-        disabled={loading}
+        disabled={ocrLoading}
       />
 
       {/* Main OCR Workflow State Render */}
@@ -171,8 +333,8 @@ export default function ScanPage() {
           </motion.div>
         )}
 
-        {/* State 1: Loading extraction */}
-        {loading && (
+        {/* OCR loading indicator */}
+        {ocrLoading && (
           <motion.div
             key="loading"
             initial={{ opacity: 0, scale: 0.95 }}
@@ -180,12 +342,12 @@ export default function ScanPage() {
             exit={{ opacity: 0, scale: 0.95 }}
             className="py-6"
           >
-            <OCRProgress status={status} progress={progress} />
+            <OCRProgress status={ocrStatus} progress={ocrProgress} />
           </motion.div>
         )}
 
-        {/* State 2: Text extracted & ready for correction */}
-        {!loading && ocrText !== "" && (
+        {/* Text editor area showing extracted OCR text */}
+        {!ocrLoading && ocrText !== "" && (
           <motion.div
             key="editor"
             initial={{ opacity: 0, y: 15 }}
@@ -202,8 +364,8 @@ export default function ScanPage() {
           </motion.div>
         )}
 
-        {/* State 3: File previewed, ready for trigger */}
-        {!loading && file && ocrText === "" && (
+        {/* Selected file preview (Images/PDF) */}
+        {!ocrLoading && file && ocrText === "" && (
           <motion.div
             key="preview"
             initial={{ opacity: 0, y: 15 }}
@@ -226,8 +388,8 @@ export default function ScanPage() {
           </motion.div>
         )}
 
-        {/* State 4: Empty (No file uploaded) */}
-        {!loading && !file && ocrText === "" && (
+        {/* Empty state (No file selected) */}
+        {!ocrLoading && !file && ocrText === "" && (
           <motion.div
             key="empty"
             initial={{ opacity: 0, scale: 0.98 }}
@@ -262,7 +424,6 @@ export default function ScanPage() {
                 muted
                 className="w-full h-full object-cover"
               />
-              {/* Scan box alignment boundaries guides */}
               <div className="absolute inset-6 border-2 border-dashed border-white/30 rounded-lg pointer-events-none flex items-center justify-center">
                 <span className="text-[10px] text-white/50 uppercase tracking-widest font-bold bg-black/40 px-2 py-0.5 rounded">
                   Document Focus
