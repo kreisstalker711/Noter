@@ -128,20 +128,26 @@ export default function ScanPage() {
   const handleExtract = async () => {
     if (!file) return;
     await processOCR(file);
+    console.log("[Client] OCR completed");
   };
 
   const handleContinue = async () => {
     if (!ocrText) return;
+    console.log("[Client] Continue button clicked");
     setGenerationLoading(true);
     setError(null);
     setCameraError(null);
 
     try {
-      // 1. Trigger server action to clean OCR and generate JSON files via Groq SDK
+      // 1. Call API route to clean OCR and generate JSON files
       const data = await generateStudyMaterial(ocrText);
+      
+      // 2. Open Study Workspace immediately to user!
       setStudyData(data);
+      setGenerationLoading(false); // Disable loading screen immediately
+      console.log("[Client] Study workspace opened");
 
-      // 2. Save study guides to Firestore db
+      // 3. Save study guides to database in the background without blocking the UI
       const currentUserId = context?.user?.uid || "mock-user-id";
       const docData = {
         cleanText: data.cleanText,
@@ -155,22 +161,29 @@ export default function ScanPage() {
         userId: currentUserId
       };
 
-      if (isMockFirebase) {
-        // Save to local storage for sandboxed test logins
-        const saved = localStorage.getItem("noter_study_materials") || "[]";
-        const parsed = JSON.parse(saved);
-        parsed.push({ ...docData, id: `mock-${Date.now()}` });
-        localStorage.setItem("noter_study_materials", JSON.stringify(parsed));
-        console.log("Study guides saved to Mock LocalStorage.");
-      } else {
-        // Save to Firebase Firestore StudyMaterials Collection
-        await addDoc(collection(db, "studyMaterials"), docData);
-        console.log("Study guides saved successfully to Firebase Firestore.");
-      }
+      console.log("[Client] Saving to Firestore (background)");
+      
+      const performSave = async () => {
+        try {
+          if (isMockFirebase) {
+            const saved = localStorage.getItem("noter_study_materials") || "[]";
+            const parsed = JSON.parse(saved);
+            parsed.push({ ...docData, id: `mock-${Date.now()}` });
+            localStorage.setItem("noter_study_materials", JSON.stringify(parsed));
+            console.log("[Client] Firestore success (Mock saved to LocalStorage)");
+          } else {
+            await addDoc(collection(db, "studyMaterials"), docData);
+            console.log("[Client] Firestore success (Saved to Cloud Firestore)");
+          }
+        } catch (dbErr) {
+          console.error("[Client] Background database save error:", dbErr);
+        }
+      };
+
+      performSave(); // Execute in background, do not await!
     } catch (err) {
-      console.error("AI study generation failed:", err);
+      console.error("[Client] AI study generation failed:", err);
       setError("AI Generation failed. Please verify network access or check Groq API configuration.");
-    } finally {
       setGenerationLoading(false);
     }
   };
