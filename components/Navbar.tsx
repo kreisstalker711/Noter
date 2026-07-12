@@ -3,14 +3,14 @@
 import React from "react";
 import { useApp } from "../context/AppContext";
 import { 
-  Home, Camera, Folder, LineChart, MessageSquare, User, 
+  Home, Camera, LineChart, MessageSquare, User, 
   Settings, HelpCircle, Sparkles, LogOut 
 } from "lucide-react";
 import { clsx } from "clsx";
 import Image from "next/image";
 import { Button } from "./ui/button";
 
-type TabType = "home" | "scan" | "library" | "stats" | "chat" | "profile" | "settings";
+type TabType = "home" | "scan" | "stats" | "chat" | "profile" | "settings";
 
 export const Navbar: React.FC = () => {
   const { activeTab, setActiveTab, user } = useApp();
@@ -18,7 +18,6 @@ export const Navbar: React.FC = () => {
   const mainNavItems = [
     { id: "home", label: "Home", icon: <Home size={18} /> },
     { id: "scan", label: "Scan", icon: <Camera size={18} /> },
-    { id: "library", label: "Library", icon: <Folder size={18} /> },
     { id: "stats", label: "Stats", icon: <LineChart size={18} /> },
     { id: "chat", label: "AI Chat", icon: <MessageSquare size={18} /> },
     { id: "profile", label: "Profile", icon: <User size={18} /> },
@@ -53,8 +52,7 @@ export const Navbar: React.FC = () => {
               const isActive = activeTab === item.id || (
                 (item.id === "scan" && activeTab === "scan") ||
                 (item.id === "stats" && activeTab === "stats") ||
-                (item.id === "chat" && activeTab === "chat") ||
-                (item.id === "library" && (activeTab === "library" || activeTab === "study" || activeTab === "flashcards"))
+                (item.id === "chat" && activeTab === "chat")
               );
               return (
                 <button
@@ -126,8 +124,7 @@ export const Navbar: React.FC = () => {
           const isActive = activeTab === item.id || (
             (item.id === "scan" && activeTab === "scan") ||
             (item.id === "stats" && activeTab === "stats") ||
-            (item.id === "chat" && activeTab === "chat") ||
-            (item.id === "library" && (activeTab === "library" || activeTab === "study" || activeTab === "flashcards"))
+            (item.id === "chat" && activeTab === "chat")
           );
           return (
             <button

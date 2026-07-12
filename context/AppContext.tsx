@@ -19,8 +19,7 @@ import {
   collection, 
   getDocs, 
   query, 
-  where,
-  addDoc
+  where
 } from "firebase/firestore";
 import { 
   initialCollections, 
@@ -31,7 +30,7 @@ import {
   Flashcard, 
   Quiz 
 } from "../lib/mockData";
-import { StudyMaterialResult, LibraryItem } from "../services/studyGenerator";
+import { StudyMaterialResult } from "../services/studyGenerator";
 
 type PageType = "splash" | "onboarding" | "auth" | "app";
 type TabType = "home" | "library" | "progress" | "profile" | "settings" | "scan" | "pdf" | "chat" | "quiz" | "flashcards" | "study" | "bonus" | "stats";
@@ -62,15 +61,6 @@ interface AppContextProps {
   setActiveStudyData: (data: StudyMaterialResult | null) => void;
   fetchStudyMaterials: () => Promise<void>;
   deleteStudyMaterial: (id: string) => Promise<void>;
-  
-  // Real Student Library Context
-  libraryItems: LibraryItem[];
-  fetchLibraryItems: () => Promise<void>;
-  addLibraryItem: (item: Omit<LibraryItem, "id" | "userId" | "createdAt" | "updatedAt"> & { file?: File }) => Promise<void>;
-  deleteLibraryItem: (id: string) => Promise<void>;
-  updateLibraryItem: (id: string, updates: Partial<LibraryItem>) => Promise<void>;
-  customCategories: string[];
-  addCustomCategory: (category: string) => void;
   
   // Navigation
   setCurrentPage: (page: PageType) => void;
@@ -122,10 +112,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Scanned study guides states
   const [studyMaterials, setStudyMaterials] = useState<StudyMaterialResult[]>([]);
   const [activeStudyData, setActiveStudyData] = useState<StudyMaterialResult | null>(null);
-
-  // Student library states
-  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
-  const [customCategories, setCustomCategories] = useState<string[]>([]);
 
   // Theme Syncing
   useEffect(() => {
@@ -270,193 +256,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const addCustomCategory = (category: string) => {
-    if (!customCategories.includes(category)) {
-      const updated = [...customCategories, category];
-      setCustomCategories(updated);
-      localStorage.setItem(`noter_custom_categories_${user?.uid || "global"}`, JSON.stringify(updated));
-    }
-  };
-
-  const fetchLibraryItems = async () => {
-    if (!user) return;
-    if (isMockFirebase) {
-      const saved = localStorage.getItem("noter_library_items") || "[]";
-      const parsed = JSON.parse(saved);
-      const userItems = parsed.filter((item: any) => item.userId === user.uid);
-      setLibraryItems(userItems);
-      
-      const cats = localStorage.getItem(`noter_custom_categories_${user.uid}`) || "[]";
-      setCustomCategories(JSON.parse(cats));
-    } else if (fbDb) {
-      try {
-        const q = query(
-          collection(fbDb, "library"),
-          where("userId", "==", user.uid)
-        );
-        const snap = await getDocs(q);
-        const list: LibraryItem[] = [];
-        snap.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as any);
-        });
-        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setLibraryItems(list);
-
-        const catsRef = doc(fbDb, "users", user.uid, "data", "categories");
-        const catsSnap = await getDoc(catsRef);
-        if (catsSnap.exists()) {
-          setCustomCategories(catsSnap.data().list || []);
-        }
-      } catch (err) {
-        console.error("Error fetching library items:", err);
-      }
-    }
-  };
-
-  const addLibraryItem = async (
-    item: Omit<LibraryItem, "id" | "userId" | "createdAt" | "updatedAt"> & { file?: File }
-  ) => {
-    if (!user) return;
-    
-    let fileURL = item.fileURL;
-    let size = item.size;
-    let type = item.type;
-    
-    if (item.file) {
-      size = item.file.size;
-      const extension = item.file.name.split(".").pop()?.toLowerCase();
-      if (["png", "jpg", "jpeg", "webp", "gif"].includes(extension || "")) {
-        type = "Image";
-      } else if (extension === "pdf") {
-        type = "PDF";
-      } else if (["doc", "docx"].includes(extension || "")) {
-        type = "Word";
-      } else if (["ppt", "pptx"].includes(extension || "")) {
-        type = "PowerPoint";
-      } else {
-        type = "Text";
-      }
-
-      if (isMockFirebase) {
-        fileURL = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(item.file!);
-        });
-      } else {
-        try {
-          const { getStorage, ref, uploadBytes, getDownloadURL } = await import("firebase/storage");
-          const storageInstance = getStorage();
-          const storageRef = ref(storageInstance, `users/${user.uid}/library/${Date.now()}_${item.file.name}`);
-          const uploadResult = await uploadBytes(storageRef, item.file);
-          fileURL = await getDownloadURL(uploadResult.ref);
-        } catch (uploadErr) {
-          console.error("Firebase Storage upload failed, falling back to base64.", uploadErr);
-          fileURL = await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(item.file!);
-          });
-        }
-      }
-    }
-
-    const newItem: LibraryItem = {
-      userId: user.uid,
-      title: item.title,
-      description: item.description,
-      fileURL: fileURL,
-      thumbnail: item.thumbnail || fileURL,
-      category: item.category,
-      folder: item.folder,
-      tags: item.tags,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      type: type,
-      size: size,
-      favorite: item.favorite,
-      pinned: item.pinned,
-      ocrText: item.ocrText || "",
-      summary: item.summary || "",
-      keywords: item.keywords || [],
-      flashcards: item.flashcards || [],
-      quiz: item.quiz || []
-    };
-
-    if (isMockFirebase) {
-      const saved = localStorage.getItem("noter_library_items") || "[]";
-      const parsed = JSON.parse(saved);
-      const mockId = `lib-${Date.now()}`;
-      parsed.push({ ...newItem, id: mockId });
-      localStorage.setItem("noter_library_items", JSON.stringify(parsed));
-      setLibraryItems((prev) => [{ ...newItem, id: mockId }, ...prev]);
-      console.log("[Client] Library Item added (Mock LocalStorage)");
-    } else if (fbDb) {
-      try {
-        const docRef = await addDoc(collection(fbDb, "library"), newItem);
-        setLibraryItems((prev) => [{ ...newItem, id: docRef.id }, ...prev]);
-        console.log("[Client] Library Item added (Firestore)");
-      } catch (err) {
-        console.error("Error adding library item:", err);
-      }
-    }
-  };
-
-  const deleteLibraryItem = async (id: string) => {
-    if (isMockFirebase) {
-      const saved = localStorage.getItem("noter_library_items") || "[]";
-      const parsed = JSON.parse(saved);
-      const filtered = parsed.filter((item: any) => item.id !== id);
-      localStorage.setItem("noter_library_items", JSON.stringify(filtered));
-      setLibraryItems((prev) => prev.filter((item) => item.id !== id));
-      console.log("[Client] Library Item deleted (Mock LocalStorage)");
-    } else if (fbDb) {
-      try {
-        const { doc, deleteDoc } = await import("firebase/firestore");
-        await deleteDoc(doc(fbDb, "library", id));
-        setLibraryItems((prev) => prev.filter((item) => item.id !== id));
-        console.log("[Client] Library Item deleted (Firestore)");
-      } catch (err) {
-        console.error("Error deleting library item:", err);
-      }
-    }
-  };
-
-  const updateLibraryItem = async (id: string, updates: Partial<LibraryItem>) => {
-    const cleanUpdates = { ...updates, updatedAt: new Date().toISOString() };
-    if (isMockFirebase) {
-      const saved = localStorage.getItem("noter_library_items") || "[]";
-      const parsed = JSON.parse(saved);
-      const updatedList = parsed.map((item: any) => {
-        if (item.id === id) {
-          return { ...item, ...cleanUpdates };
-        }
-        return item;
-      });
-      localStorage.setItem("noter_library_items", JSON.stringify(updatedList));
-      setLibraryItems((prev) =>
-        prev.map((item) => (item.id === id ? ({ ...item, ...cleanUpdates } as any) : item))
-      );
-      console.log("[Client] Library Item updated (Mock LocalStorage)");
-    } else if (fbDb) {
-      try {
-        const { doc, updateDoc } = await import("firebase/firestore");
-        await updateDoc(doc(fbDb, "library", id), cleanUpdates as any);
-        setLibraryItems((prev) =>
-          prev.map((item) => (item.id === id ? ({ ...item, ...cleanUpdates } as any) : item))
-        );
-        console.log("[Client] Library Item updated (Firestore)");
-      } catch (err) {
-        console.error("Error updating library item:", err);
-      }
-    }
-  };
-
-  // Sync study guide & library fetchers on user state change
+  // Sync study guide fetchers on user state change
   useEffect(() => {
     if (user) {
       fetchStudyMaterials();
-      fetchLibraryItems();
     }
   }, [user]);
 
@@ -1074,14 +877,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setActiveStudyData,
         fetchStudyMaterials,
         deleteStudyMaterial,
-        
-        libraryItems,
-        fetchLibraryItems,
-        addLibraryItem,
-        deleteLibraryItem,
-        updateLibraryItem,
-        customCategories,
-        addCustomCategory,
         
         setCurrentPage,
         setActiveTab,

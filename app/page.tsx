@@ -8,7 +8,6 @@ import { AuthPages } from "../components/AuthPages";
 import { Navbar } from "../components/Navbar";
 import { Dashboard } from "../components/Dashboard";
 import { StatsPage } from "../components/StatsPage";
-import { Library } from "../components/Library";
 import { Progress } from "../components/Progress";
 import { Profile } from "../components/Profile";
 import { SettingsView } from "../components/SettingsView";
@@ -46,7 +45,6 @@ function AppRouter() {
           {/* Page body content */}
           <div className="flex-1 p-6 md:p-8">
             {activeTab === "home" && <Dashboard />}
-            {activeTab === "library" && <Library />}
             {activeTab === "stats" && <StatsPage />}
             {activeTab === "progress" && <Progress />}
             {activeTab === "profile" && <Profile />}
