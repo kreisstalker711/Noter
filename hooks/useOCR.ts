@@ -7,6 +7,7 @@ export const useOCR = () => {
   const [status, setStatus] = useState("");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [confidence, setConfidence] = useState(100);
 
   const processOCR = async (file: File) => {
     setLoading(true);
@@ -61,6 +62,7 @@ Formula: E_initial = E_final => K_initial + U_initial = K_final + U_final`;
 
         setProgress(100);
         setStatus("Extracted!");
+        setConfidence(98);
         setOcrText(mockExtractedPDFText);
       } catch (err) {
         setError("Failed to parse PDF document. Please verify the file integrity.");
@@ -72,17 +74,22 @@ Formula: E_initial = E_final => K_initial + U_initial = K_final + U_final`;
 
     // 2. Image OCR Flow utilizing Tesseract.js
     try {
-      const text = await extractText(file, (statusText, prog) => {
+      const ocrResult = await extractText(file, (statusText, prog) => {
         setStatus(statusText);
         setProgress(Math.round(prog * 100));
       });
 
-      if (!text || !text.trim()) {
+      setConfidence(ocrResult.confidence);
+
+      if (!ocrResult.text || !ocrResult.text.trim()) {
         setError("No text detected. Please upload a clearer image with better lighting.");
+      } else if (ocrResult.confidence < 50) {
+        setError(`OCR confidence is low (${ocrResult.confidence}%). Please upload a clearer image or ensure better lighting.`);
+        setOcrText(ocrResult.text); // allow them to review
       } else {
         setProgress(100);
         setStatus("Extracted!");
-        setOcrText(text);
+        setOcrText(ocrResult.text);
       }
     } catch (err) {
       console.error("OCR process error:", err);
@@ -97,6 +104,7 @@ Formula: E_initial = E_final => K_initial + U_initial = K_final + U_final`;
     setError(null);
     setProgress(0);
     setStatus("");
+    setConfidence(100);
   };
 
   return {
@@ -107,6 +115,7 @@ Formula: E_initial = E_final => K_initial + U_initial = K_final + U_final`;
     progress,
     error,
     setError,
+    confidence,
     processOCR,
     clearOCR
   };
