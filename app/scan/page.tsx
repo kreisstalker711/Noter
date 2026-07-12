@@ -11,7 +11,7 @@ import { EmptyState } from "../../components/EmptyState";
 import { Dialog } from "../../components/ui/dialog";
 import { Button } from "../../components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Camera, RefreshCw, X, AlertCircle } from "lucide-react";
+import { ArrowLeft, Camera, RefreshCw, X, AlertCircle, FileText } from "lucide-react";
 import Image from "next/image";
 
 // AI Generation imports
@@ -24,6 +24,7 @@ import { KeywordCard } from "../../components/KeywordCard";
 import { StudyTabs, StudyTabType } from "../../components/StudyTabs";
 import { db, isMockFirebase } from "../../lib/firebase";
 import { collection, addDoc } from "firebase/firestore";
+import { saveLocalFile, getLocalFile } from "../../lib/db";
 
 export default function ScanPage() {
   const context = React.useContext(AppContext);
@@ -52,8 +53,47 @@ export default function ScanPage() {
   // AI workspace states
   const [generationLoading, setGenerationLoading] = useState(false);
   const [activeStudyTab, setActiveStudyTab] = useState<StudyTabType>("summary");
+  const [localFileUrl, setLocalFileUrl] = useState<string | null>(null);
+  const [localFileType, setLocalFileType] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Load local file blob from IndexedDB when workspace mounts
+  useEffect(() => {
+    let currentUrl: string | null = null;
+
+    const loadLocalFile = async () => {
+      if (activeStudyData?.id) {
+        try {
+          const fileItem = await getLocalFile(activeStudyData.id);
+          if (fileItem) {
+            const url = URL.createObjectURL(fileItem.fileBlob);
+            currentUrl = url;
+            setLocalFileUrl(url);
+            setLocalFileType(fileItem.mimeType);
+          } else {
+            setLocalFileUrl(null);
+            setLocalFileType(null);
+          }
+        } catch (err) {
+          console.error("Error loading file from IndexedDB:", err);
+          setLocalFileUrl(null);
+          setLocalFileType(null);
+        }
+      } else {
+        setLocalFileUrl(null);
+        setLocalFileType(null);
+      }
+    };
+
+    loadLocalFile();
+
+    return () => {
+      if (currentUrl) {
+        URL.revokeObjectURL(currentUrl);
+      }
+    };
+  }, [activeStudyData]);
 
   // Close camera tracks when unmounting
   useEffect(() => {
@@ -187,6 +227,11 @@ export default function ScanPage() {
             localStorage.setItem("noter_study_materials", JSON.stringify(parsed));
             console.log("[Client] Firestore success (Mock saved to LocalStorage)");
             
+            // Save file blob in IndexedDB
+            if (file) {
+              await saveLocalFile(mockId, file, file.name, file.type);
+            }
+            
             // Sync context history immediately
             fetchStudyMaterials();
             
@@ -195,6 +240,11 @@ export default function ScanPage() {
           } else {
             const docRef = await addDoc(collection(db, "studyMaterials"), docData);
             console.log("[Client] Firestore success (Saved to Cloud Firestore)");
+            
+            // Save file blob in IndexedDB
+            if (file) {
+              await saveLocalFile(docRef.id, file, file.name, file.type);
+            }
             
             // Sync context history immediately
             fetchStudyMaterials();
@@ -314,6 +364,49 @@ export default function ScanPage() {
 
           {activeStudyTab === "keywords" && (
             <KeywordCard keywords={activeStudyData.keywords} />
+          )}
+
+          {activeStudyTab === "file" && (
+            <div className="flex flex-col items-center justify-center min-h-[400px] bg-card border border-border rounded-2xl p-4 overflow-hidden relative">
+              {localFileUrl ? (
+                localFileType?.startsWith("image/") ? (
+                  <img
+                    src={localFileUrl}
+                    alt={activeStudyData.chapterTitle}
+                    className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-sm selection-none pointer-events-none"
+                  />
+                ) : localFileType === "application/pdf" ? (
+                  <iframe
+                    src={localFileUrl}
+                    className="w-full h-[70vh] border-0 rounded-xl bg-background"
+                    title={activeStudyData.chapterTitle}
+                  />
+                ) : (
+                  <div className="text-center p-6 space-y-4">
+                    <FileText size={40} className="mx-auto text-muted-foreground" />
+                    <div>
+                      <p className="text-xs font-extrabold text-foreground">Document File Ready</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">This format cannot be rendered inline.</p>
+                    </div>
+                    <a
+                      href={localFileUrl}
+                      download={activeStudyData.fileName || "document"}
+                      className="inline-flex h-9.5 px-5 rounded-xl bg-primary text-primary-foreground hover:opacity-90 font-bold text-xs items-center cursor-pointer"
+                    >
+                      Download File
+                    </a>
+                  </div>
+                )
+              ) : (
+                <div className="text-center p-6 space-y-2 text-muted-foreground select-none">
+                  <AlertCircle size={28} className="mx-auto text-muted-foreground/80" />
+                  <p className="text-xs font-extrabold">No Local File Found</p>
+                  <p className="text-[10px] max-w-[280px] mx-auto font-semibold leading-relaxed">
+                    The original file is not stored in your browser's IndexedDB. Study guides generated on other devices only cache AI metadata.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

@@ -31,6 +31,7 @@ import {
   Quiz 
 } from "../lib/mockData";
 import { StudyMaterialResult } from "../services/studyGenerator";
+import { deleteLocalFile } from "../lib/db";
 
 type PageType = "splash" | "onboarding" | "auth" | "app";
 type TabType = "home" | "library" | "progress" | "profile" | "settings" | "scan" | "pdf" | "chat" | "quiz" | "flashcards" | "study" | "bonus" | "stats";
@@ -60,7 +61,10 @@ interface AppContextProps {
   activeStudyData: StudyMaterialResult | null;
   setActiveStudyData: (data: StudyMaterialResult | null) => void;
   fetchStudyMaterials: () => Promise<void>;
+  updateStudyMaterial: (id: string, updates: Partial<StudyMaterialResult>) => Promise<void>;
   deleteStudyMaterial: (id: string) => Promise<void>;
+  customCategories: string[];
+  addCustomCategory: (category: string) => void;
   
   // Navigation
   setCurrentPage: (page: PageType) => void;
@@ -112,6 +116,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Scanned study guides states
   const [studyMaterials, setStudyMaterials] = useState<StudyMaterialResult[]>([]);
   const [activeStudyData, setActiveStudyData] = useState<StudyMaterialResult | null>(null);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
 
   // Theme Syncing
   useEffect(() => {
@@ -231,6 +236,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteStudyMaterial = async (id: string) => {
+    // Delete local file blob from IndexedDB if it exists
+    try {
+      await deleteLocalFile(id);
+    } catch (err) {
+      console.error("Error clearing IndexedDB file:", err);
+    }
+
     if (isMockFirebase) {
       const saved = localStorage.getItem("noter_study_materials") || "[]";
       const parsed = JSON.parse(saved);
@@ -256,10 +268,55 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const updateStudyMaterial = async (id: string, updates: Partial<StudyMaterialResult>) => {
+    if (isMockFirebase) {
+      const saved = localStorage.getItem("noter_study_materials") || "[]";
+      const parsed = JSON.parse(saved);
+      const updatedList = parsed.map((item: any) => {
+        if (item.id === id) {
+          return { ...item, ...updates };
+        }
+        return item;
+      });
+      localStorage.setItem("noter_study_materials", JSON.stringify(updatedList));
+      setStudyMaterials((prev) =>
+        prev.map((item) => (item.id === id ? ({ ...item, ...updates } as any) : item))
+      );
+      if (activeStudyData && activeStudyData.id === id) {
+        setActiveStudyData((prev) => (prev ? ({ ...prev, ...updates } as any) : null));
+      }
+      console.log("[Client] Mock studyMaterial updated.");
+    } else if (fbDb) {
+      try {
+        const { doc, updateDoc } = await import("firebase/firestore");
+        await updateDoc(doc(fbDb, "studyMaterials", id), updates as any);
+        setStudyMaterials((prev) =>
+          prev.map((item) => (item.id === id ? ({ ...item, ...updates } as any) : item))
+        );
+        if (activeStudyData && activeStudyData.id === id) {
+          setActiveStudyData((prev) => (prev ? ({ ...prev, ...updates } as any) : null));
+        }
+        console.log("[Client] Firestore studyMaterial updated.");
+      } catch (err) {
+        console.error("Error updating study material:", err);
+      }
+    }
+  };
+
+  const addCustomCategory = (category: string) => {
+    if (!customCategories.includes(category)) {
+      const updated = [...customCategories, category];
+      setCustomCategories(updated);
+      localStorage.setItem(`noter_custom_categories_${user?.uid || "global"}`, JSON.stringify(updated));
+    }
+  };
+
   // Sync study guide fetchers on user state change
   useEffect(() => {
     if (user) {
       fetchStudyMaterials();
+      const cats = localStorage.getItem(`noter_custom_categories_${user.uid}`) || "[]";
+      setCustomCategories(JSON.parse(cats));
     }
   }, [user]);
 
@@ -876,7 +933,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         activeStudyData,
         setActiveStudyData,
         fetchStudyMaterials,
+        updateStudyMaterial,
         deleteStudyMaterial,
+        customCategories,
+        addCustomCategory,
         
         setCurrentPage,
         setActiveTab,

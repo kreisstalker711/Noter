@@ -3,7 +3,7 @@
 import React from "react";
 import { clsx } from "clsx";
 
-export type StudyTabType = "summary" | "points" | "cards" | "quiz" | "keywords";
+export type StudyTabType = "summary" | "points" | "cards" | "quiz" | "keywords" | "file";
 
 interface StudyTabsProps {
   activeTab: StudyTabType;
@@ -16,7 +16,8 @@ export const StudyTabs: React.FC<StudyTabsProps> = ({ activeTab, setActiveTab })
     { id: "points", label: "Takeaways" },
     { id: "cards", label: "Flashcards" },
     { id: "quiz", label: "Quiz" },
-    { id: "keywords", label: "Keywords" }
+    { id: "keywords", label: "Keywords" },
+    { id: "file", label: "Original Document" }
   ] as const;
 
   return (
