@@ -29,6 +29,30 @@ export interface StudyMaterialResult {
   isMock?: boolean;
 }
 
+export interface LibraryItem {
+  id?: string;
+  userId: string;
+  title: string;
+  description: string;
+  fileURL: string;
+  thumbnail?: string;
+  category: string;
+  folder: string; // e.g. "Root" or "Semester 1"
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  type: "PDF" | "Image" | "Word" | "PowerPoint" | "Text" | "StudyGuide";
+  size: number; // in bytes
+  favorite: boolean;
+  pinned: boolean;
+  ocrText?: string;
+  summary?: string;
+  importantPoints?: string[];
+  keywords?: string[];
+  flashcards?: Flashcard[];
+  quiz?: QuizQuestion[];
+}
+
 /**
  * Calls the API route POST /api/generate to clean OCR text and generate study materials.
  */
