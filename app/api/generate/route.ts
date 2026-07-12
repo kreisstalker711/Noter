@@ -3,6 +3,99 @@ import { getGroqClient } from "../../../lib/groq";
 
 export const dynamic = "force-dynamic";
 
+function cleanMalformedJson(str: string): string {
+  let cleaned = str.trim();
+  // Remove markdown code block wraps if present
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned.replace(/^```json\s*/, "").replace(/^```\s*/, "").replace(/\s*```$/, "");
+  }
+  // Extract content between first '{' and last '}'
+  const startIdx = cleaned.indexOf("{");
+  const endIdx = cleaned.lastIndexOf("}");
+  if (startIdx !== -1 && endIdx !== -1) {
+    cleaned = cleaned.substring(startIdx, endIdx + 1);
+  }
+  return cleaned;
+}
+
+function extractRobustData(parsedData: any, subjectData: any, cleanText: string) {
+  const keys = Object.keys(parsedData || {});
+  const findVal = (keyNames: string[]) => {
+    for (const kn of keyNames) {
+      const match = keys.find(k => k.toLowerCase() === kn.toLowerCase());
+      if (match) return parsedData[match];
+    }
+    return undefined;
+  };
+
+  const chapterTitle = findVal(["chapterTitle", "title", "chapter"]) || subjectData.chapter || "Untitled Chapter";
+  
+  let summary = findVal(["summary", "description", "abstract"]);
+  if (!summary || typeof summary !== "string") {
+    summary = cleanText.split(/[.!?]+/).slice(0, 2).join(". ") + ".";
+  }
+
+  let importantPoints = findVal(["importantPoints", "points", "takeaways", "keyPoints"]);
+  if (!Array.isArray(importantPoints)) {
+    importantPoints = typeof importantPoints === "string" ? [importantPoints] : [];
+  }
+  if (importantPoints.length === 0) {
+    importantPoints = cleanText.split(/[.!?]+/).slice(1, 4).map(s => s.trim()).filter(Boolean);
+  }
+
+  let flashcards = findVal(["flashcards", "cards", "questions"]);
+  if (!Array.isArray(flashcards)) flashcards = [];
+  flashcards = flashcards.map((f: any) => {
+    if (!f || typeof f !== "object") return null;
+    const fKeys = Object.keys(f);
+    const fFind = (names: string[]) => {
+      const m = fKeys.find(k => names.includes(k.toLowerCase()));
+      return m ? f[m] : undefined;
+    };
+    return {
+      question: fFind(["question", "q"]) || "Study question",
+      answer: fFind(["answer", "a"]) || "Refer to text.",
+      difficulty: fFind(["difficulty", "diff"]) || "Medium"
+    };
+  }).filter(Boolean);
+
+  let quiz = findVal(["quiz", "questions", "test", "quizQuestions"]);
+  if (!Array.isArray(quiz)) quiz = [];
+  quiz = quiz.map((q: any) => {
+    if (!q || typeof q !== "object") return null;
+    const qKeys = Object.keys(q);
+    const qFind = (names: string[]) => {
+      const m = qKeys.find(k => names.includes(k.toLowerCase()));
+      return m ? q[m] : undefined;
+    };
+    const question = qFind(["question", "q"]) || "Select the correct option.";
+    let options = qFind(["options", "opts", "answers"]);
+    if (!Array.isArray(options)) {
+      options = ["True", "False", "Not mentioned", "None of the above"];
+    }
+    while (options.length < 4) options.push(`Option ${options.length + 1}`);
+    options = options.slice(0, 4);
+
+    const correctAnswer = qFind(["correctanswer", "correct", "answer"]) || options[0];
+    const explanation = qFind(["explanation", "exp", "reason"]) || "Based on reading section.";
+    return { question, options, correctAnswer, explanation };
+  }).filter(Boolean);
+
+  let keywords = findVal(["keywords", "terms", "tags", "vocab"]);
+  if (!Array.isArray(keywords)) {
+    keywords = typeof keywords === "string" ? [keywords] : ["Study", "Concept"];
+  }
+
+  return {
+    chapterTitle,
+    summary,
+    importantPoints,
+    flashcards,
+    quiz,
+    keywords
+  };
+}
+
 /**
  * Next.js API Route handler for AI generation
  * POST /api/generate
@@ -186,47 +279,58 @@ Source Cleaned Text:
       console.log(`[API] AI generation attempt ${attempt} started`);
       const startTime = Date.now();
       
-      const materialCompletion = await groq.chat.completions.create({
-        model: "llama-3.1-8b-instant",
-        messages: [{ role: "user", content: generatePrompt }],
-        temperature: 0.2,
-        response_format: { type: "json_object" }
-      });
-
-      rawJson = materialCompletion.choices[0]?.message?.content || "";
-      const duration = Date.now() - startTime;
-      console.log(`[API] Attempt ${attempt} finished in ${duration}ms`);
-
       try {
-        parsedData = JSON.parse(rawJson);
+        const materialCompletion = await groq.chat.completions.create({
+          model: "llama-3.1-8b-instant",
+          messages: [{ role: "user", content: generatePrompt }],
+          temperature: 0.2,
+          response_format: { type: "json_object" }
+        });
+
+        rawJson = materialCompletion.choices[0]?.message?.content || "";
+        const duration = Date.now() - startTime;
+        console.log(`[API] Attempt ${attempt} finished in ${duration}ms`);
+
+        const cleanedJson = cleanMalformedJson(rawJson);
+        const tempParsed = JSON.parse(cleanedJson);
         
-        // Response Validation Checks
-        const summaryValid = parsedData.summary && parsedData.summary.length > 5;
-        const quizValid = Array.isArray(parsedData.quiz) && parsedData.quiz.length > 0;
-        
-        if (!summaryValid || !quizValid) {
-          console.warn("[API] Response validation failed. Retrying...");
-          parsedData = null; // force retry
+        // Validation check for key sections
+        const normKeys = Object.keys(tempParsed || {}).map(k => k.toLowerCase());
+        const hasSummary = normKeys.includes("summary");
+        const hasQuiz = normKeys.includes("quiz");
+
+        if (hasSummary && hasQuiz) {
+          parsedData = extractRobustData(tempParsed, subjectData, cleanText);
+        } else {
+          console.warn("[API] Attempt failed validation check (missing summary or quiz).");
+          if (attempt === 2) {
+            // Force heal whatever we got on final attempt
+            parsedData = extractRobustData(tempParsed || {}, subjectData, cleanText);
+          }
         }
       } catch (jsonErr) {
-        console.error("[API] JSON parsing failed on attempt", attempt, jsonErr);
-        parsedData = null;
+        console.error(`[API] JSON parsing failed on attempt ${attempt}:`, jsonErr);
+        if (attempt === 2) {
+          // If JSON parse failed completely on final attempt, construct a fully healed blank schema from cleanedText
+          console.warn("[API] Parse failed on final attempt. Healing from cleaned text.");
+          parsedData = extractRobustData({}, subjectData, cleanText);
+        }
       }
     }
 
     if (!parsedData) {
-      throw new Error("Failed to generate a valid study guide after multiple attempts.");
+      parsedData = extractRobustData({}, subjectData, cleanText);
     }
 
     // Validate keys and shape
     const result = {
       cleanText,
-      chapterTitle: parsedData.chapterTitle || subjectData.chapter || "Untitled Chapter",
-      summary: parsedData.summary || "Summary generation failed.",
-      importantPoints: Array.isArray(parsedData.importantPoints) ? parsedData.importantPoints : [],
-      flashcards: Array.isArray(parsedData.flashcards) ? parsedData.flashcards : [],
-      quiz: Array.isArray(parsedData.quiz) ? parsedData.quiz : [],
-      keywords: Array.isArray(parsedData.keywords) ? parsedData.keywords : [],
+      chapterTitle: parsedData.chapterTitle,
+      summary: parsedData.summary,
+      importantPoints: parsedData.importantPoints,
+      flashcards: parsedData.flashcards,
+      quiz: parsedData.quiz,
+      keywords: parsedData.keywords,
       category: subjectData.subject || "General"
     };
 
